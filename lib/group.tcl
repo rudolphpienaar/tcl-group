@@ -91,6 +91,8 @@ DEBUGGING AND LOGGING
 package require yaml
 package require json
 
+load [file join [file dirname [info script]] ../clib group_parser.so]
+
 proc log {level msg} {
     #
     # ARGS
@@ -254,159 +256,89 @@ namespace eval group {
         #
         # DESC
         # Creates a group object by loading its data from a YAML source.
+        # It uses a robust multi-step process to avoid Tcl's type ambiguity:
+        # 1. Pre-processes the raw YAML text to protect leaf values with spaces.
+        # 2. Parses the now-"sanitized" and unambiguous text into a dictionary.
+        # 3. Flattens the dictionary into the key-value list for the group.
+        # 4. Creates the group array.
+        # 5. Restores the original spaces in the group's values.
         #
         # RETURN
-        # Returns 1 on success. Throws an error on failure (e.g., corrupt data).
+        # Returns 1 on success. Throws an error on failure.
         #
         upvar 1 $group_name obj
-        set yaml_data ""
+        variable _leaf_placeholder
+
+        # Read the entire file into memory as a single string.
+        set yaml_text ""
         if {[string match "%*" $destination]} {
             set filename [string range $destination 1 end]
             if {[catch {open $filename r} f]} {
                 return -code error "could not open file '$filename': $f"
             }
-            set yaml_data [read $f]
+            set yaml_text [read $f]
             close $f
         } else {
-            set yaml_data $destination
+            set yaml_text $destination
         }
 
-        # Step 1: Parse the YAML into a pristine nested dictionary.
-        if {[catch {set nested_dict [::yaml::yaml2dict $yaml_data]} err]} {
-            return -code error "Failed to parse YAML data: $err"
+        # Step 1 & 2: Pre-process the raw text to protect leaf values.
+        set sanitized_lines {}
+        foreach line [split $yaml_text \n] {
+            # Use a regex to find simple "key: value" lines.
+            # Captures group 1: indentation, key, and separator.
+            # Captures group 2: the value part of the line.
+            if {[regexp {^(\s*\S+:\s+)(.*)$} $line -> prefix value_part]} {
+                # This is a potential leaf. Protect its value.
+                set protected_value [string map [list " " $_leaf_placeholder] $value_part]
+                lappend sanitized_lines "$prefix$protected_value"
+            } else {
+                # This line isn't a simple key:value, so leave it untouched.
+                lappend sanitized_lines $line
+            }
         }
-        if {[string length [string trim $yaml_data]] > 0 && [dict size $nested_dict] == 0} {
+        set sanitized_yaml [join $sanitized_lines \n]
+
+        # Step 3: Parse the now-sanitized YAML text.
+        if {[catch {set nested_dict [::yaml::yaml2dict $sanitized_yaml]} err]} {
+            return -code error "Failed to parse sanitized YAML data: $err"
+        }
+
+        if {[string length [string trim $sanitized_yaml]] > 0 && [dict size $nested_dict] == 0} {
             return -code error "Failed to parse YAML data: Invalid or empty format"
         }
 
-        # HIGHLIGHT START
-        # Step 2: Protect leaf values by pre-processing the dictionary.
-        set protected_dict [_protect_leaves $nested_dict]
-        log "DEBUG" $protected_dict
+        # Step 4: Flatten the now-safe nested dictionary.
+        set flat_dict [_dict_flatten $nested_dict]
 
-        # Step 3: Flatten the now-unambiguous "protected" dictionary.
-        set flat_dict [_dict_flatten $protected_dict]
-        log "DEBUG" $flat_dict
-
-        # Step 4: Load the flat dictionary into the final group array.
+        # Step 5: Load the flat dictionary into the final group array.
         array set obj $flat_dict
 
-        # Step 5: Restore the original values by removing the placeholders.
+        # Step 6: Restore the original values by removing the placeholders.
         _restore_leaves $group_name
-        # HIGHLIGHT END
+        _create_dispatcher $group_name
 
         return 1
     }
-
-    # proc fromYaml {group_name destination} {
-    #     #
-    #     # ARGS
-    #     # group_name    in/out  The name of the group object to create.
-    #     # destination   in      YAML data as a string, or '%filepath' to read from a file.
-    #     #
-    #     # DESC
-    #     # Creates a group object by loading its data from a YAML source.
-    #     #
-    #     # RETURN
-    #     # Returns 1 on success. Throws an error on failure (e.g., corrupt data).
-    #     #
-    #     upvar 1 $group_name obj
-    #     set yaml_data ""
-    #     if {[string match "%*" $destination]} {
-    #         set filename [string range $destination 1 end]
-    #         if {[catch {open $filename r} f]} {
-    #             return -code error "could not open file '$filename': $f"
-    #         }
-    #         set yaml_data [read $f]
-    #         close $f
-    #     } else {
-    #         set yaml_data $destination
-    #     }
-    #     if {[catch {set nested_dict [::yaml::yaml2dict $yaml_data]} err]} {
-    #         return -code error "Failed to parse YAML data: $err"
-    #     }
-    #     if {[string length [string trim $yaml_data]] > 0 && [dict size $nested_dict] == 0} {
-    #         return -code error "Failed to parse YAML data: Invalid or empty format"
-    #     }
-    #     log "DEBUG" "read: $nested_dict"
-    #     set flat_dict [_dict_flatten $nested_dict]
-    #     log "DEBUG" "flag_dict: $flat_dict"
-    #     array set obj $flat_dict
-    #     return 1
-    # }
 
     proc toYaml {group_name sink} {
         # Wrapper that calls the main markup engine for YAML format.
         return [_toMarkup $group_name $sink "yml"]
     }
 
-    proc toJson {group_name sink} {
+    proc toJson {group_name sink {indent_width 0}} {
+        #
+        # ARGS
+        # group_name    in      The name of the group object to save.
+        # sink          in      Variable name to hold output, or '%filepath'.
+        # indent_width  in (opt) The number of spaces to use for indentation.
+        #                       Defaults to 0, which produces minified JSON.
+        #
+        # DESC
         # Wrapper that calls the main markup engine for JSON format.
-        return [_toMarkup $group_name $sink "json"]
+        #
+        return [_toMarkup $group_name $sink "json" $indent_width]
     }
-
-    # proc toYaml {group_name sink} {
-    #     #
-    #     # ARGS
-    #     # group_name    in      The name of the group object to save.
-    #     # sink          in      Variable name to hold output, or '%filepath'.
-    #     #
-    #     # DESC
-    #     # Saves a group object's data to a YAML sink with debugging to find
-    #     # where value corruption occurs.
-    #     #
-    #     # RETURN
-    #     # Returns 1 on success. Throws an error if the group does not exist
-    #     # or the output file cannot be opened.
-    #     #
-    #     if {![info exists ::$group_name]} {
-    #         return -code error "group '$group_name' does not exist"
-    #     }
-    #     upvar #0 $group_name obj
-    #
-    #     # DEBUG: Check what's in the array
-    #     log DEBUG "Raw array contents (all keys):"
-    #     foreach {k v} [array get obj] {
-    #         log DEBUG "  $k => '$v'"
-    #     }
-    #
-    #     set flat_dict [array get obj]
-    #
-    #     log DEBUG "About to call _dict_unflatten with [dict size $flat_dict] entries"
-    #     set nested_dict [_dict_unflatten $flat_dict]
-    #
-    #     # DEBUG: Check nested_dict structure
-    #     log DEBUG "nested_dict after _dict_unflatten: $nested_dict"
-    #     dict for {k v} $nested_dict {
-    #         if {[catch {dict size $v} size]} {
-    #             # It's a scalar
-    #             log DEBUG "  $k => '$v' (scalar)"
-    #         } else {
-    #             # It's a nested dict
-    #             log DEBUG "  $k => (nested dict with $size entries)"
-    #             dict for {k2 v2} $v {
-    #                 log DEBUG "    $k2 => '$v2'"
-    #             }
-    #         }
-    #     }
-    #
-    #     # Use custom YAML serializer
-    #     set yaml_data "---\n"
-    #     append yaml_data [_dict_to_yaml $nested_dict]
-    #
-    #     if {[string match "%*" $sink]} {
-    #         set filename [string range $sink 1 end]
-    #         if {[catch {open $filename w} f]} {
-    #             return -code error "could not open file '$filename' for writing: $f"
-    #         }
-    #         puts -nonewline $f $yaml_data
-    #         close $f
-    #     } else {
-    #         upvar 1 $sink out_var
-    #         set out_var $yaml_data
-    #     }
-    #     return 1
-    # }
 
     proc fromJson {group_name destination} {
         #
@@ -416,145 +348,64 @@ namespace eval group {
         #
         # DESC
         # Creates a group object by loading its data from a JSON source.
+        # This procedure uses a robust raw-text pre-processing strategy to
+        # avoid Tcl's type ambiguity issues. It sanitizes the JSON text
+        # before parsing to protect string values that contain spaces.
         #
         # RETURN
-        # Returns 1 on success. Throws an error on failure (e.g., corrupt data).
+        # Returns 1 on success. Throws an error on failure.
         #
         upvar 1 $group_name obj
-        set json_data ""
+        variable _leaf_placeholder
+
+        # Phase 1: Read and Normalize the Raw Text
+        set raw_json_text ""
         if {[string match "%*" $destination]} {
             set filename [string range $destination 1 end]
             if {[catch {open $filename r} f]} {
                 return -code error "could not open file '$filename': $f"
             }
-            set json_data [read $f]
+            set raw_json_text [read $f]
             close $f
         } else {
-            set json_data $destination
+            set raw_json_text $destination
         }
+        set normalized_text [string map [list "{" "{\n" "}" "\n}" "," ",\n"] $raw_json_text]
 
-        # Step 1: Parse the JSON into a pristine nested dictionary.
-        if {[catch {set nested_dict [::json::json2dict $json_data]} err]} {
-            return -code error "Failed to parse JSON data: $err"
+
+        # Phase 2: Protect the Leaf Values
+        set sanitized_lines {}
+        foreach line [split $normalized_text \n] {
+            # This regex identifies string-based leaf nodes and captures three parts:
+            # 1. prefix: Everything from the start of the line up to the value's opening quote.
+            # 2. value_part: The actual string content between the quotes.
+            # 3. suffix: The closing quote and the rest of the line.
+            if {[regexp {^(\s*".*?":\s*")(.*)(".*)$} $line -> prefix value_part suffix]} {
+                # This is a string leaf node. Protect its value.
+                set protected_value [string map [list " " $_leaf_placeholder] $value_part]
+                lappend sanitized_lines "$prefix$protected_value$suffix"
+            } else {
+                # This is a structural line ({, }), a non-string value, or empty. Leave it alone.
+                lappend sanitized_lines $line
+            }
         }
+        set sanitized_json [join $sanitized_lines \n]
 
-        # HIGHLIGHT START
-        # Step 2: Protect leaf values by pre-processing the dictionary.
-        set protected_dict [_protect_leaves $nested_dict]
 
-        # Step 3: Flatten the now-unambiguous "protected" dictionary.
-        set flat_dict [_dict_flatten $protected_dict]
-
-        # Step 4: Load the flat dictionary into the final group array.
+        # Phase 3: Parse and Load the Sanitized Data
+        if {[catch {set nested_dict [::json::json2dict $sanitized_json]} err]} {
+            return -code error "Failed to parse sanitized JSON data: $err"
+        }
+        set flat_dict [_dict_flatten $nested_dict]
         array set obj $flat_dict
 
-        # Step 5: Restore the original values by removing the placeholders.
+
+        # Phase 4: Restore and Activate
         _restore_leaves $group_name
-        # HIGHLIGHT END
+        _create_dispatcher $group_name
 
         return 1
     }
-
-    # proc fromJson {group_name destination} {
-    #     #
-    #     # ARGS
-    #     # group_name    in/out  The name of the group object to create.
-    #     # destination   in      JSON data as a string, or '%filepath' to read from a file.
-    #     #
-    #     # DESC
-    #     # Creates a group object by loading its data from a JSON source.
-    #     #
-    #     # RETURN
-    #     # Returns 1 on success. Throws an error on failure (e.g., corrupt data).
-    #     #
-    #     upvar 1 $group_name obj
-    #     set json_data ""
-    #     if {[string match "%*" $destination]} {
-    #         set filename [string range $destination 1 end]
-    #         if {[catch {open $filename r} f]} {
-    #             return -code error "could not open file '$filename': $f"
-    #         }
-    #         set json_data [read $f]
-    #         close $f
-    #     } else {
-    #         set json_data $destination
-    #     }
-    #     if {[catch {set nested_dict [::json::json2dict $json_data]} err]} {
-    #         return -code error "Failed to parse JSON data: $err"
-    #     }
-    #     set flat_dict [_dict_flatten $nested_dict]
-    #     array set obj $flat_dict
-    #     return 1
-    # }
-    #
-    # proc toJson {group_name sink} {
-    #     #
-    #     # ARGS
-    #     # group_name    in      The name of the group object to save.
-    #     # sink          in      Variable name to hold output, or '%filepath'.
-    #     #
-    #     if {[catch {upvar #0 $group_name obj} err]} {
-    #         return -code error "group '$group_name' does not exist"
-    #     }
-    #
-    #     # Step 1: Get the flat dictionary from the array.
-    #     set flat_dict [array get obj]
-    #
-    #     # Step 2: Use your working procedure to create the correct nested dictionary.
-    #     set nested_dict [_dict_unflatten $flat_dict]
-    #
-    #     # Step 3: Use the standard, reliable Tcl command to create the JSON string.
-    #     # This one line replaces the entire buggy _dict_to_yaml serializer.
-    #     set json_data [::json::dict2json $nested_dict]
-    #
-    #     # Step 4: Write the result to the sink (file or variable).
-    #     if {[string match "%*" $sink]} {
-    #         set filename [string range $sink 1 end]
-    #         if {[catch {open $filename w} f]} {
-    #             return -code error "could not open file '$filename' for writing: $f"
-    #         }
-    #         puts $f $json_data
-    #         close $f
-    #     } else {
-    #         upvar 1 $sink out_var
-    #         set out_var $json_data
-    #     }
-    #     return 1
-    # }
-
-    # proc toJson {group_name sink} {
-    #     #
-    #     # ARGS
-    #     # group_name    in      The name of the group object to save.
-    #     # sink          in      Variable name to hold output, or '%filepath'.
-    #     #
-    #     # DESC
-    #     # Saves a group object's data to a JSON sink.
-    #     #
-    #     # RETURN
-    #     # Returns 1 on success. Throws an error if the group does not exist
-    #     # or the output file cannot be opened.
-    #     #
-    #     if {[catch {upvar #0 $group_name obj} err]} {
-    #         return -code error "group '$group_name' does not exist"
-    #     }
-    #     set flat_dict [array get obj]
-    #     set nested_dict [_dict_unflatten $flat_dict]
-    #     set json_data [_dict_to_json $nested_dict]
-    #     if {[string match "%*" $sink]} {
-    #         set filename [string range $sink 1 end]
-    #         if {[catch {open $filename w} f]} {
-    #             return -code error "could not open file '$filename' for writing: $f"
-    #         }
-    #         puts $f $json_data
-    #         close $f
-    #     } else {
-    #         upvar 1 $sink out_var
-    #         set out_var $json_data
-    #     }
-    #     return 1
-    # }
-    #
 
     proc fromLegacy {group_name destination} {
         #
@@ -895,11 +746,13 @@ namespace eval group {
         #
         # ARGS
         # nested_dict   in          A nested Tcl dictionary.
-        # prefix        in (opt)    An internal string prefix for recursive key generation.
+        # prefix        in (opt)    An internal string for recursive key generation.
         #
         # DESC
         # (Internal) Recursively flattens a nested dictionary into a flat
-        # dictionary with comma-delimited keys.
+        # dictionary with comma-delimited keys. This simple version relies on
+        # its input dictionary having been pre-processed to remove ambiguity
+        # between leaf values and nested structures.
         #
         # RETURN
         # A flat dictionary with comma-delimited keys.
@@ -912,13 +765,8 @@ namespace eval group {
             } else {
                 set new_key "$prefix,$key"
             }
-
-            # HIGHLIGHT START
-            # This "Surgical Check" robustly distinguishes true nested dictionaries
-            # from simple strings that contain spaces.
-            if {[string is list -strict $value] && [llength $value] % 2 == 0} {
-                # HIGHLIGHT END
-                # The value is a true dictionary structure, so we recurse.
+            if {[isDict $value]} {
+                # The value is a dictionary structure, so we recurse.
                 dict for {k v} [_dict_flatten $value $new_key] {
                     dict set flat_dict $k $v
                 }
@@ -930,38 +778,6 @@ namespace eval group {
         return $flat_dict
     }
 
-    # proc _dict_flatten {nested_dict {prefix ""}} {
-    #     #
-    #     # ARGS
-    #     # nested_dict   in          A nested Tcl dictionary.
-    #     # prefix        in (opt)    An internal string prefix for recursive key generation.
-    #     #
-    #     # DESC
-    #     # (Internal) Recursively flattens a nested dictionary into a flat
-    #     # dictionary with comma-delimited keys.
-    #     #
-    #     # RETURN
-    #     # A flat dictionary with comma-delimited keys.
-    #     #
-    #     set flat_dict [dict create]
-    #     dict for {key value} $nested_dict {
-    #         set new_key ""
-    #         if {$prefix eq ""} {
-    #             set new_key $key
-    #         } else {
-    #             set new_key "$prefix,$key"
-    #         }
-    #         if {[isDict $value]} {
-    #             dict for {k v} [_dict_flatten $value $new_key] {
-    #                 dict set flat_dict $k $v
-    #             }
-    #         } else {
-    #             dict set flat_dict $new_key $value
-    #         }
-    #     }
-    #     return $flat_dict
-    # }
-    #
     proc _values_whiteSpaceReplace {flat_dict} {
         #
         # ARGS
@@ -1183,37 +999,6 @@ namespace eval group {
         return $yaml
     }
 
-    proc _protect_leaves {dict_in} {
-        #
-        # ARGS
-        # dict_in   in      A pristine nested Tcl dictionary from the YAML parser.
-        #
-        # DESC
-        # (Internal) Recursively traverses a dictionary and replaces spaces
-        # in all leaf (scalar) values with the configured placeholder. This
-        # creates an unambiguous in-memory representation that can be safely
-        # processed by the _dict_flatten procedure.
-        #
-        # RETURN
-        # The newly created "protected" dictionary.
-        #
-        variable _leaf_placeholder
-        set dict_out [dict create]
-
-        dict for {key value} $dict_in {
-            # Use the "Surgical Check" to distinguish branches from leaves.
-            if {[string is list -strict $value] && [llength $value] % 2 == 0} {
-                # It's a branch (nested dictionary), so we recurse.
-                dict set dict_out $key [_protect_leaves $value]
-            } else {
-                # It's a leaf (scalar value), so we protect it.
-                set protected_value [string map [list " " $_leaf_placeholder] $value]
-                dict set dict_out $key $protected_value
-            }
-        }
-        return $dict_out
-    }
-
     proc _restore_leaves {group_name} {
         #
         # ARGS
@@ -1237,11 +1022,17 @@ namespace eval group {
         array set group_arr $restored_list
     }
 
-    # The main internal engine that handles both formats.
-    proc _toMarkup {group_name sink format} {
+    proc _toMarkup {group_name sink format {indent_width 0}} {
         #
-        # DESC: Main serialization engine that converts a group to either
-        #       JSON or YAML format and writes it to a sink.
+        # ARGS
+        # group_name    in      The group to serialize.
+        # sink          in      The output file or variable.
+        # format        in      The output format ("yml" or "json").
+        # indent_width  in (opt) The width for JSON indentation.
+        #
+        # DESC
+        # Main serialization engine that converts a group to either
+        # JSON or YAML format and writes it to a sink.
         #
         if {[catch {upvar #0 $group_name obj} err]} {
             return -code error "group '$group_name' does not exist"
@@ -1250,7 +1041,7 @@ namespace eval group {
         set nested_dict [_dict_unflatten $flat_dict]
 
         # Call the recursive helper to build the final string.
-        set markup_data [_dict_to_markup_recursive $nested_dict $format]
+        set markup_data [_dict_to_markup_recursive $nested_dict $format 0 $indent_width]
 
         # Write to sink (file or variable).
         if {[string match "%*" $sink]} {
@@ -1258,7 +1049,6 @@ namespace eval group {
             if {[catch {open $filename w} f]} {
                 return -code error "could not open file '$filename' for writing: $f"
             }
-            # Add YAML document separator if needed.
             if {$format eq "yml"} {puts -nonewline $f "---\n"}
             puts -nonewline $f $markup_data
             close $f
@@ -1270,36 +1060,41 @@ namespace eval group {
         return 1
     }
 
-    # The recursive worker that builds the markup string.
-    proc _dict_to_markup_recursive {dict format {indent 0}} {
+    proc _dict_to_markup_recursive {dict format indent_level indent_width} {
         #
-        # DESC: The recursive worker that builds either a JSON or YAML
-        #       string from a nested dictionary.
+        # ARGS
+        # dict          in      The dictionary to process.
+        # format        in      The target format ("yml" or "json").
+        # indent_level  in      The current recursion depth for indentation.
+        # indent_width  in      The number of spaces per indent level for JSON.
+        #
+        # DESC
+        # The recursive worker that builds either a JSON or YAML
+        # string from a nested dictionary.
         #
         variable _leaf_placeholder
         set output ""
-        set spacing [string repeat "  " $indent]
         set members {}
 
         dict for {key value} $dict {
-            # The isDict check now works reliably because of the placeholders.
             if {[isDict $value]} {
                 # It's a nested dictionary, so we recurse.
-                set nested_markup [_dict_to_markup_recursive $value $format [expr {$indent + 1}]]
+                set nested_markup [_dict_to_markup_recursive $value $format [expr {$indent_level + 1}] $indent_width]
                 if {$format eq "json"} {
                     lappend members "\"$key\":$nested_markup"
                 } else {
+                    set spacing [string repeat " " [expr {$indent_level * 2}]]
                     append output "${spacing}${key}:\n$nested_markup"
                 }
             } else {
-                # It's a scalar. First, restore the spaces from the placeholder.
+                # It's a scalar. Restore the spaces from the placeholder.
                 set final_value [string map [list $_leaf_placeholder " "] $value]
 
                 if {$format eq "json"} {
                     set escaped [string map {\\ \\\\ \" \\\"} $final_value]
                     lappend members "\"$key\":\"$escaped\""
                 } else {
-                    # YAML needs quoting for special characters.
+                    set spacing [string repeat " " [expr {$indent_level * 2}]]
                     if {$final_value eq "" || [string first ": " $final_value] != -1} {
                         set escaped [string map {\\ \\\\ \" \\\"} $final_value]
                         append output "${spacing}${key}: \"$escaped\"\n"
@@ -1311,7 +1106,16 @@ namespace eval group {
         }
 
         if {$format eq "json"} {
-            return "\{[join $members ","]\}"
+            if {$indent_width > 0} {
+                # Pretty-print the JSON output.
+                set spacing [string repeat " " [expr {$indent_level * $indent_width}]]
+                set child_spacing [string repeat " " [expr {($indent_level + 1) * $indent_width}]]
+                if {[llength $members] == 0} {return "{}"}
+                return "{\n$child_spacing[join $members ",\n$child_spacing"]\n${spacing}}"
+            } else {
+                # Return minified JSON.
+                return "\{[join $members ","]\}"
+            }
         } else {
             return $output
         }
