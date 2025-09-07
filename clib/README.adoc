@@ -1,0 +1,70 @@
+= Tcl Group Module - C Parser Extension
+
+== Overview
+
+This directory contains the C source code for a high-performance parser extension for the Tcl `group` module.
+
+The primary purpose of this extension is to provide a fast and robust way to parse and flatten JSON data. It delegates the complex parsing logic to the battle-hardened `json-c` library, completely bypassing the Tcl type-ambiguity issues that arise when handling nested data structures within Tcl itself.
+
+The C code exposes a single new command to the Tcl interpreter: `group::fromJson_C`.
+
+== Dependencies
+
+To compile this extension, you will need the development headers for both Tcl and the `json-c` library.
+
+=== Installation (Debian/Ubuntu)
+[source,bash]
+----
+sudo apt-get update
+sudo apt-get install tcl-dev libjson-c-dev
+----
+
+=== Installation (Red Hat/Fedora/CentOS)
+[source,bash]
+----
+sudo yum install tcl-devel json-c-devel
+# or on newer systems:
+sudo dnf install tcl-devel json-c-devel
+----
+
+=== Installation (Arch Linux)
+[source,bash]
+----
+sudo pacman -Syu tcl json-c
+----
+
+=== Installation (macOS/Homebrew)
+[source,bash]
+----
+brew install tcl-tk json-c
+----
+
+== Compilation
+
+Once the dependencies are installed, you can compile the C source file into a shared library that Tcl can load.
+
+=== Compilation (Linux)
+
+From within this `lib/` directory, run the following command:
+[source,bash]
+----
+gcc -fPIC -shared group_parser.c -o group_parser.so -I/usr/include/tcl -ltcl -ljson-c
+----
+
+=== Compilation (macOS)
+
+The command is different for macOS due to the linker flags and Homebrew's file paths. Run the following from this `lib/` directory:
+[source,bash]
+----
+gcc -dynamiclib group_parser.c -o group_parser.dylib -I$(brew --prefix tcl-tk)/include -L$(brew --prefix tcl-tk)/lib -ltcl8.6 -I$(brew --prefix json-c)/include -L$(brew --prefix json-c)/lib -ljson-c
+----
+
+This will create the `group_parser.so` or `group_parser.dylib` file in the same directory as `group.tcl`, which is where the main module expects to find it.
+
+== Usage
+
+The `group.tcl` module is designed to load the compiled library automatically. It will look for the appropriate file (`.so` or `.dylib`) based on the operating system.
+
+The public `group::fromJson` procedure then acts as a simple, user-friendly wrapper around the high-performance `group::fromJson_C` command provided by this extension.
+
+
