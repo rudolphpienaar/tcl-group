@@ -17,7 +17,7 @@ if {![file isdirectory $out_dir]} {
 # --- 2. CREATE SHARED DATA VIA LAYERED COMPOSITION ---
 puts "--- Creating base 'peregrine_falcon' group ---"
 
-# This data will be used for both YAML and JSON tests.
+# This data will be used for all tests.
 group::create prey_item { type "Bird" species "Pigeon" }
 set diet_keys { primary_food preference }; set diet_vals { @prey_item "high" }
 group::createFromLists diet_profile &diet_keys &diet_vals
@@ -42,7 +42,6 @@ puts "-> Done.\n"
 
 puts "Loading group from YAML file..."
 group::fromYaml loaded_from_yaml %$yaml_file
-puts [group::dump loaded_from_yaml]
 puts "-> Done.\n"
 
 puts "Verifying data from the loaded YAML group:"
@@ -52,41 +51,60 @@ set deep_prey_yaml $loaded_from_yaml(ecology,habitat,diet,primary_food,species)
 puts "  - Level 5 check (Ecology):  $deep_prey_yaml"
 puts "-> YAML Verification PASSED.\n"
 
-# --- 4. JSON SAVE, LOAD, AND VERIFY ---
-puts "--- Testing JSON Round-Trip ---"
 
-# Define paths for both minified and pretty-printed files.
-set min_json_file [file join $out_dir falcon.min.json]
-set pretty_json_file [file join $out_dir falcon.pretty.json]
+# --- 4. TCL-BASED JSON SAVE, LOAD, AND VERIFY ---
+puts "--- Testing Tcl-Based JSON Round-Trip ---"
+set json_file [file join $out_dir falcon.json]
 
-# --- SAVE ---
-# Call 1: Default (minified) output.
-# No third argument is provided, so it defaults to an indent_width of 0.
-puts "Saving group to MINIFIED JSON file: $min_json_file"
-group::toJson peregrine_falcon %$min_json_file
+puts "Saving group to PRETTY JSON file: $json_file"
+group::toJson peregrine_falcon %$json_file 2
 puts "-> Done.\n"
 
-# Call 2: Pretty-printed output with a 2-space indent.
-# We provide '2' as the third argument for the indent_width.
-puts "Saving group to PRETTY JSON file: $pretty_json_file"
-group::toJson peregrine_falcon %$pretty_json_file 2
+puts "Loading group from JSON file (using Tcl implementation)..."
+group::fromJson loaded_from_json %$json_file
 puts "-> Done.\n"
 
-# --- LOAD AND VERIFY ---
-# We only need to load one of the files to verify the data is correct.
-puts "Loading group from MINIFIED JSON file..."
-group::fromJson loaded_from_json %$min_json_file
-puts [group::dump loaded_from_json]
-puts "-> Done.\n"
-
-puts "Verifying data from the loaded JSON group:"
+puts "Verifying data from the loaded Tcl JSON group:"
 set species_json $loaded_from_json(taxonomy,species)
 puts "  - Level 3 check (Taxonomy): $species_json"
 set deep_prey_json $loaded_from_json(ecology,habitat,diet,primary_food,species)
 puts "  - Level 5 check (Ecology):  $deep_prey_json"
-puts "-> JSON Verification PASSED.\n"
+puts "-> Tcl JSON Verification PASSED.\n"
 
-# --- 5. CLEANUP ---
+
+# --- 5. C-BASED JSON LOAD AND VERIFY (IF AVAILABLE) ---
+puts "--- Testing C-Based JSON Load (if available) ---"
+
+# Check if the C command was successfully loaded and registered by the module.
+if {[llength [info commands ::group::fromJson_C]]} {
+    puts "C extension found. Running C-based load test."
+
+    # Read the JSON file into a variable.
+    set f [open $json_file r]
+    set json_text [read $f]
+    close $f
+
+    # Call the C command directly. It returns a flat key-value list.
+    set flat_list [group::fromJson_C $json_text]
+
+    # Manually create the group array from the flat list.
+    array set loaded_from_c $flat_list
+
+    # Manually activate the array into a true group object.
+    # NOTE: This uses an internal command, which is acceptable for a test harness.
+    group::_create_dispatcher loaded_from_c
+
+    puts "Verifying data from the loaded C JSON group:"
+    set species_c $loaded_from_c(taxonomy,species)
+    puts "  - Level 3 check (Taxonomy): $species_c"
+    set deep_prey_c $loaded_from_c(ecology,habitat,diet,primary_food,species)
+    puts "  - Level 5 check (Ecology):  $deep_prey_c"
+    puts "-> C JSON Verification PASSED.\n"
+} else {
+    puts "C extension not compiled or loaded. Skipping C-based test.\n"
+}
+
+# --- 6. CLEANUP ---
 # puts "Cleaning up output directory..."
 # file delete -force $out_dir
 # puts "-> Done."

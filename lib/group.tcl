@@ -91,8 +91,6 @@ DEBUGGING AND LOGGING
 package require yaml
 package require json
 
-load [file join [file dirname [info script]] ../clib group_parser.so]
-
 proc log {level msg} {
     #
     # ARGS
@@ -124,6 +122,27 @@ namespace eval group {
     variable _fileType "yml"
     variable _manPage $::GROUP_MODULE_INFO
     variable _leaf_placeholder "__"
+
+
+    # --- Load Optional C Extension ---
+    # This block attempts to load the compiled C extension for high-performance
+    # JSON parsing. It dynamically determines the correct library extension
+    # for the current operating system (e.g., .so, .dylib).
+    #
+    # The 'catch' ensures that if the library is not found or fails to load,
+    # a warning is logged, but the module continues to load gracefully,
+    # falling back to the pure-Tcl implementations.
+    if {
+        [catch {
+            global tcl_platform
+            set lib_filename "group_parser$tcl_platform(dl_ext)"
+            set lib_path [file join [file dirname [info script]] ../clib $lib_filename]
+            load $lib_path
+            log INFO "Successfully loaded C parser extension ($lib_filename)."
+        } err]
+    } {
+        log WARN "Could not load optional C parser extension. Module will use Tcl-only implementations. Error: $err"
+    }
 
     namespace export \
         create copy createFromLists \
