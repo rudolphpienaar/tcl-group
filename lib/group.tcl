@@ -91,6 +91,8 @@ DEBUGGING AND LOGGING
 package require yaml
 package require json
 
+package provide group 1.0
+
 # --- Load Optional C Extension ---
 # This block MUST be in the global scope, before the namespace is declared,
 # to ensure the C extension's initialization function can register its
