@@ -91,6 +91,31 @@ DEBUGGING AND LOGGING
 package require yaml
 package require json
 
+# --- Load Optional C Extension ---
+# This block MUST be in the global scope, before the namespace is declared,
+# to ensure the C extension's initialization function can register its
+# command correctly within the Tcl interpreter.
+#
+# It explicitly provides the package name ('Group_parser') to the 'load' command.
+# This forces Tcl to look for the exact C initialization function
+# 'Group_parser_Init', avoiding any ambiguity from filename derivation.
+#
+set lib_filename "group_parser[info sharedlibextension]"
+set lib_path \
+    [file normalize [file join [file dirname [info script]] ../clib $lib_filename]]
+if {[file exists $lib_path]} {
+    if {
+        [catch {
+            load $lib_path Group_parser
+        } err]
+    } {
+        # This is a real error, not just a missing file.
+        puts stderr \
+            "CRITICAL WARNING: Found C extension at '$lib_path' but it failed to load. Error: $err"
+    }
+}
+
+
 proc log {level msg} {
     #
     # ARGS
@@ -117,32 +142,10 @@ proc log {level msg} {
     }
 }
 
-
 namespace eval group {
     variable _fileType "yml"
     variable _manPage $::GROUP_MODULE_INFO
     variable _leaf_placeholder "__"
-
-
-    # --- Load Optional C Extension ---
-    # This block attempts to load the compiled C extension for high-performance
-    # JSON parsing. It dynamically determines the correct library extension
-    # for the current operating system (e.g., .so, .dylib).
-    #
-    # The 'catch' ensures that if the library is not found or fails to load,
-    # a warning is logged, but the module continues to load gracefully,
-    # falling back to the pure-Tcl implementations.
-    if {
-        [catch {
-            global tcl_platform
-            set lib_filename "group_parser$tcl_platform(dl_ext)"
-            set lib_path [file join [file dirname [info script]] ../clib $lib_filename]
-            load $lib_path
-            log INFO "Successfully loaded C parser extension ($lib_filename)."
-        } err]
-    } {
-        log WARN "Could not load optional C parser extension. Module will use Tcl-only implementations. Error: $err"
-    }
 
     namespace export \
         create copy createFromLists \

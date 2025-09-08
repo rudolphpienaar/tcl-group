@@ -42,6 +42,7 @@ puts "-> Done.\n"
 
 puts "Loading group from YAML file..."
 group::fromYaml loaded_from_yaml %$yaml_file
+log DEBUG [group::dump loaded_from_yaml]
 puts "-> Done.\n"
 
 puts "Verifying data from the loaded YAML group:"

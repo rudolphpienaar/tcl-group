@@ -74,7 +74,8 @@ static int GroupFromJsonCmd(ClientData clientData, Tcl_Interp *interp, int objc,
 
 /*
  * The initialization function that Tcl calls when the library is loaded.
- * It registers our new command in the 'group' namespace.
+ * Its name MUST match the Tcl 'load' command's derivation from the filename.
+ * For 'group_parser.so', the expected name is 'Groupparser_Init'.
  */
 int Group_parser_Init(Tcl_Interp *interp) {
     if (Tcl_InitStubs(interp, "8.5", 0) == NULL) {
