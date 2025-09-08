@@ -1,4 +1,4 @@
-# Tcl Group Module: Protoypial-based composable data objects
+# Tcl Group Module: Prototypical-based composable data objects
 
 A Tcl library for creating and managing "groups," which are composite, prototype-based data objects built on Tcl's associative arrays.
 
