@@ -22,7 +22,7 @@ To solve the fundamental ambiguity issues with Tcl's type system when parsing co
 
 When compiled and available, the `group::fromJson` command will automatically use this C engine, guaranteeing correct parsing of any valid JSON file.
 
-* [**C Extension README**](./lib/README.md): See the detailed guide for dependencies and compilation instructions.
+* [**C Extension README**](./clib/README.md): See the detailed guide for dependencies and compilation instructions.
 
 ## Documentation
 
