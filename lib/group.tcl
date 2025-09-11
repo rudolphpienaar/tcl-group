@@ -227,7 +227,7 @@ namespace eval group {
         # RETURN
         # Returns 1 on success. Throws an error on failure.
         #
-        upvar 1 $group_name group_arr
+        upvar #0 $group_name group_arr
         set keys [_deref_arg $struct_arg]
         set values [_deref_arg $data_arg]
 
@@ -345,12 +345,12 @@ namespace eval group {
         return 1
     }
 
-    proc toYaml {group_name sink} {
+    proc toYaml {group_name {sink ""}} {
         # Wrapper that calls the main markup engine for YAML format.
         return [_toMarkup $group_name $sink "yml"]
     }
 
-    proc toJson {group_name sink {indent_width 0}} {
+    proc toJson {group_name {sink ""} {indent_width 0}} {
         #
         # ARGS
         # group_name    in      The name of the group object to save.
@@ -1050,13 +1050,21 @@ namespace eval group {
         #
         # ARGS
         # group_name    in      The group to serialize.
-        # sink          in      The output file or variable.
+        # sink          in      The output file or variable. Can be an empty string.
         # format        in      The output format ("yml" or "json").
         # indent_width  in (opt) The width for JSON indentation.
         #
         # DESC
-        # Main serialization engine that converts a group to either
-        # JSON or YAML format and writes it to a sink.
+        # The main serialization engine that converts a group to either JSON or
+        # YAML format. It has two modes of operation:
+        # 1. If a <sink> is provided, it saves the output to the specified
+        #    file or variable and returns 1 on success.
+        # 2. If <sink> is an empty string, it returns the generated markup
+        #    string directly.
+        #
+        # RETURN
+        # Returns the markup string if <sink> is empty, or 1 on success if a
+        # sink is provided. Throws an error on failure.
         #
         if {[catch {upvar #0 $group_name obj} err]} {
             return -code error "group '$group_name' does not exist"
@@ -1067,23 +1075,69 @@ namespace eval group {
         # Call the recursive helper to build the final string.
         set markup_data [_dict_to_markup_recursive $nested_dict $format 0 $indent_width]
 
-        # Write to sink (file or variable).
-        if {[string match "%*" $sink]} {
-            set filename [string range $sink 1 end]
-            if {[catch {open $filename w} f]} {
-                return -code error "could not open file '$filename' for writing: $f"
-            }
-            if {$format eq "yml"} {puts -nonewline $f "---\n"}
-            puts -nonewline $f $markup_data
-            close $f
-        } else {
-            upvar 1 $sink out_var
+        # Check if a sink was provided.
+        if {$sink eq ""} {
+            # No sink: Return the data directly.
             if {$format eq "yml"} {set markup_data "---\n$markup_data"}
-            set out_var $markup_data
+            return $markup_data
+        } else {
+            # A sink was provided: Write to the file or variable.
+            if {[string match "%*" $sink]} {
+                set filename [string range $sink 1 end]
+                if {[catch {open $filename w} f]} {
+                    return -code error "could not open file '$filename' for writing: $f"
+                }
+                if {$format eq "yml"} {puts -nonewline $f "---\n"}
+                puts -nonewline $f $markup_data
+                close $f
+            } else {
+                upvar 1 $sink out_var
+                if {$format eq "yml"} {set markup_data "---\n$markup_data"}
+                set out_var $markup_data
+            }
+            # Return 1 for success, as before.
+            return 1
         }
-        return 1
     }
 
+    # proc _toMarkup {group_name sink format {indent_width 0}} {
+    #     #
+    #     # ARGS
+    #     # group_name    in      The group to serialize.
+    #     # sink          in      The output file or variable.
+    #     # format        in      The output format ("yml" or "json").
+    #     # indent_width  in (opt) The width for JSON indentation.
+    #     #
+    #     # DESC
+    #     # Main serialization engine that converts a group to either
+    #     # JSON or YAML format and writes it to a sink.
+    #     #
+    #     if {[catch {upvar #0 $group_name obj} err]} {
+    #         return -code error "group '$group_name' does not exist"
+    #     }
+    #     set flat_dict [array get obj]
+    #     set nested_dict [_dict_unflatten $flat_dict]
+    #
+    #     # Call the recursive helper to build the final string.
+    #     set markup_data [_dict_to_markup_recursive $nested_dict $format 0 $indent_width]
+    #
+    #     # Write to sink (file or variable).
+    #     if {[string match "%*" $sink]} {
+    #         set filename [string range $sink 1 end]
+    #         if {[catch {open $filename w} f]} {
+    #             return -code error "could not open file '$filename' for writing: $f"
+    #         }
+    #         if {$format eq "yml"} {puts -nonewline $f "---\n"}
+    #         puts -nonewline $f $markup_data
+    #         close $f
+    #     } else {
+    #         upvar 1 $sink out_var
+    #         if {$format eq "yml"} {set markup_data "---\n$markup_data"}
+    #         set out_var $markup_data
+    #     }
+    #     return 1
+    # }
+    #
     proc _dict_to_markup_recursive {dict format indent_level indent_width} {
         #
         # ARGS
