@@ -90,7 +90,7 @@ DEBUGGING AND LOGGING
 
 package require yaml
 package require json
-
+source [file join [file dirname [info script]] table.tcl]
 package provide group 1.0
 
 # --- Load Optional C Extension ---
@@ -150,9 +150,9 @@ namespace eval group {
     variable _leaf_placeholder "__"
 
     namespace export \
-        create copy createFromLists \
+        create copy createFromLists add \
         fromYaml toYaml fromJson toJson fromLegacy toLegacy \
-        getSubgroup orderValues associate dump \
+        getSubgroup orderValues associate dump toTable \
         setFileType getFileType man \
         setLeafPlaceholder getLeafPlaceholder
 
@@ -243,6 +243,33 @@ namespace eval group {
         associate group_arr $kv_list
         _create_dispatcher $group_name
         return 1
+    }
+
+    proc add {group_name key value} {
+        #
+        # ARGS
+        # group_name    in/out  The name of the group object to modify.
+        # key           in      The top-level key to set or compose under.
+        # value         in      The value to set. Can be a scalar or a
+        #                       component with a composition sigil (e.g., @rules).
+        #
+        # DESC
+        # Sets a value within an existing group. If the value is a component
+        # marked with a composition sigil ('@' or '*'), it uses the 'associate'
+        # engine to flatten the component into the group. Otherwise, it
+        # performs a simple 'set' for scalar values.
+        #
+        upvar #0 $group_name group_arr
+
+        # Check if the value is a component that needs composition.
+        if {[string match "@*" $value] || [string match "*" $value]} {
+            # It's a component. Use the 'associate' engine to flatten it
+            # into the group under the specified key.
+            associate group_arr [list $key $value]
+        } else {
+            # It's a simple scalar value.
+            set group_arr($key) $value
+        }
     }
 
     proc copy {new_group_name source_group_name} {
@@ -606,6 +633,123 @@ namespace eval group {
         return 1
     }
 
+
+    proc toTable {group_name args} {
+        #
+        # ARGS
+        # group_name    in      The name of the group object to format.
+        # args          in      An optional key-value list of options:
+        #                       -order: A list of keys in the desired display order.
+        #                       -headerKeyColor, -headerValColor, etc. for color.
+        #
+        # DESC
+        # Converts the group's data into a formatted ASCII table. If an -order
+        # list is provided, rows are displayed in that order; otherwise, they
+        # are sorted alphabetically by key.
+        #
+        # RETURN
+        # A string containing the fully formatted ASCII table.
+        #
+        if {[catch {upvar #0 $group_name arr} err]} {
+            return -code error "group '$group_name' does not exist"
+        }
+
+        # --- Step 1: Parse optional arguments ---
+        set options [dict create {*}$args]
+        set order_list ""
+        if {[dict exists $options -order]} {
+            set order_list [dict get $options -order]
+            # Remove -order so we can pass the remaining color options to the formatter.
+            set options [dict remove $options -order]
+        }
+
+        # --- Step 2: Build the matrix with the correct row order ---
+        set matrix {}
+        lappend matrix [list "Key" "Value"] ;# Header
+
+        if {$order_list ne ""} {
+            # An order was specified. Use it.
+            foreach key $order_list {
+                if {[info exists arr($key)]} {
+                    lappend matrix [list $key $arr($key)]
+                }
+            }
+        } else {
+            # No order specified. Default to alphabetical.
+            foreach key [lsort [array names arr]] {
+                lappend matrix [list $key $arr($key)]
+            }
+        }
+
+        # --- Step 3: Delegate formatting to the 'table' module ---
+        return [::table::render $matrix {*}$options]
+    }
+
+    # proc toTable {group_name args} {
+    #     #
+    #     # ARGS
+    #     # group_name    in      The name of the group object to format.
+    #     # args          in      An optional key-value list of color options to be
+    #     #                       passed directly to the table formatter.
+    #     #
+    #     # DESC
+    #     # Converts the key-value data of a group object into a human-readable
+    #     # ASCII table by delegating to the self-contained 'table::render'
+    #     # procedure from the local table.tcl module.
+    #     #
+    #     # RETURN
+    #     # A string containing the fully formatted ASCII table.
+    #     #
+    #     if {[catch {upvar #0 $group_name arr} err]} {
+    #         return -code error "group '$group_name' does not exist"
+    #     }
+    #
+    #     # --- Step 1: Transform the group's array into a matrix ---
+    #     set matrix {}
+    #     # Add the header row.
+    #     lappend matrix [list "Key" "Value"]
+    #
+    #     # Sort the keys for consistent output and add data rows.
+    #     foreach key [lsort [array names arr]] {
+    #         lappend matrix [list $key $arr($key)]
+    #     }
+    #
+    #     # --- Step 2: Delegate formatting to the 'table' module ---
+    #     # The call is to the non-conflicting '::table::render'.
+    #     # The '{*}args' passes along any optional color settings.
+    #     return [::table::render $matrix {*}$args]
+    # }
+
+
+    proc _dump_recursive {dict {indent_level 0}} {
+        #
+        # ARGS
+        # dict          in      The nested dictionary to process.
+        # indent_level  in      The current recursion depth for indentation.
+        #
+        # DESC
+        # (Internal) Recursively walks a nested dictionary and builds a string
+        # representing an indented tree structure for human-readable output.
+        #
+        # RETURN
+        # A string containing the formatted, indented tree.
+        #
+        set output ""
+        set spacing [string repeat "  " $indent_level]
+
+        dict for {key value} $dict {
+            if {[isDict $value]} {
+                # It's a nested dictionary (a branch). Print the key and recurse.
+                append output "${spacing}${key}\n"
+                append output [_dump_recursive $value [expr {$indent_level + 1}]]
+            } else {
+                # It's a scalar (a leaf). Print the key and value.
+                append output "${spacing}${key}: $value\n"
+            }
+        }
+        return $output
+    }
+
     proc dump {group_name {sink void}} {
         #
         # ARGS
@@ -613,42 +757,30 @@ namespace eval group {
         # sink          in (opt)    Optional filename. If "void", returns string.
         #
         # DESC
-        # Dumps a group to a file in the legacy .object format or returns string.
+        # Dumps a group's data to a sink in a human-readable, indented
+        # tree format that visually represents the nested structure.
         #
         # RETURN
         # If sink is a filename, returns 1 on success.
         # If sink is "void", returns the formatted group data as a string.
-        # Throws an error if the group does not exist or the file cannot be opened.
+        # Throws an error if the group does not exist.
         #
         if {[catch {upvar #0 $group_name arr} err]} {
             return -code error "group '$group_name' does not exist"
         }
-        global delim
-        if {![info exists delim]} {set delim ">"}
-        set output_buffer ""
-        set fileID ""
+
+        # To display hierarchy, we must first reconstruct the nested dictionary.
+        set flat_dict [array get arr]
+        set nested_dict [_dict_unflatten $flat_dict]
+
+        # Call the recursive helper to generate the indented tree string.
+        set output_buffer [_dump_recursive $nested_dict]
+
         if {$sink ne "void"} {
             if {[catch {open $sink w} fileID]} {
                 return -code error "could not open file '$sink' for writing: $fileID"
             }
-        }
-        set arrlst {}
-        foreach {index value} [array get arr] {
-            lappend arrlst [list $index $value]
-        }
-        set sorted [lsort -index 0 $arrlst]
-        set prevSet ""
-        foreach item $sorted {
-            lassign $item index value
-            set currSet [lindex [split $index ,] 0]
-            set line [format "%-25s %s" "$index$delim" "$value"]
-            if {$currSet ne $prevSet && $prevSet ne ""} {
-                if {$fileID ne ""} {puts $fileID ""} else {append output_buffer "\n"}
-            }
-            if {$fileID ne ""} {puts $fileID $line} else {append output_buffer "$line\n"}
-            set prevSet $currSet
-        }
-        if {$fileID ne ""} {
+            puts -nonewline $fileID $output_buffer
             close $fileID
             return 1
         } else {
