@@ -90,7 +90,7 @@ DEBUGGING AND LOGGING
 
 package require yaml
 package require json
-source [file join [file dirname [info script]] table.tcl]
+package require table 1.0
 package provide group 1.0
 
 # --- Load Optional C Extension ---
@@ -684,42 +684,6 @@ namespace eval group {
         # --- Step 3: Delegate formatting to the 'table' module ---
         return [::table::render $matrix {*}$options]
     }
-
-    # proc toTable {group_name args} {
-    #     #
-    #     # ARGS
-    #     # group_name    in      The name of the group object to format.
-    #     # args          in      An optional key-value list of color options to be
-    #     #                       passed directly to the table formatter.
-    #     #
-    #     # DESC
-    #     # Converts the key-value data of a group object into a human-readable
-    #     # ASCII table by delegating to the self-contained 'table::render'
-    #     # procedure from the local table.tcl module.
-    #     #
-    #     # RETURN
-    #     # A string containing the fully formatted ASCII table.
-    #     #
-    #     if {[catch {upvar #0 $group_name arr} err]} {
-    #         return -code error "group '$group_name' does not exist"
-    #     }
-    #
-    #     # --- Step 1: Transform the group's array into a matrix ---
-    #     set matrix {}
-    #     # Add the header row.
-    #     lappend matrix [list "Key" "Value"]
-    #
-    #     # Sort the keys for consistent output and add data rows.
-    #     foreach key [lsort [array names arr]] {
-    #         lappend matrix [list $key $arr($key)]
-    #     }
-    #
-    #     # --- Step 2: Delegate formatting to the 'table' module ---
-    #     # The call is to the non-conflicting '::table::render'.
-    #     # The '{*}args' passes along any optional color settings.
-    #     return [::table::render $matrix {*}$args]
-    # }
-
 
     proc _dump_recursive {dict {indent_level 0}} {
         #
