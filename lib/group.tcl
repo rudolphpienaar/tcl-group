@@ -292,7 +292,7 @@ namespace eval group {
         }
         # Now that we know it exists, it's safe to link to it.
         upvar #0 $source_group_name source_obj
-        upvar 1 $new_group_name new_obj
+        upvar #0 $new_group_name new_obj
         array set new_obj [array get source_obj]
         set new_obj(parent) $source_group_name
         _create_dispatcher $new_group_name
@@ -317,7 +317,7 @@ namespace eval group {
         # RETURN
         # Returns 1 on success. Throws an error on failure.
         #
-        upvar 1 $group_name obj
+        upvar #0 $group_name obj
         variable _leaf_placeholder
 
         # Read the entire file into memory as a single string.
@@ -406,7 +406,7 @@ namespace eval group {
         # RETURN
         # Returns 1 on success. Throws an error on failure.
         #
-        upvar 1 $group_name obj
+        upvar #0 $group_name obj
         variable _leaf_placeholder
 
         # Phase 1: Read and Normalize the Raw Text
@@ -470,7 +470,7 @@ namespace eval group {
         # RETURN
         # Returns 1 on success. Throws an error if the data is malformed.
         #
-        upvar 1 $group_name obj
+        upvar #0 $group_name obj
         global delim
         if {![info exists delim]} {set delim ">"}
         set legacy_data ""
