@@ -1,96 +1,232 @@
-# Tcl Group Module: Prototypical-based composable data objects
+# Tcl Group: Prototypical Object-Oriented Programming for Tcl
 
-A Tcl library for creating and managing "groups," which are composite, prototype-based data objects built on Tcl's associative arrays.
+**Bring JavaScript/Lua-style prototypical inheritance to Tcl.**
 
-## Description
+A lightweight OOP system for Tcl that implements **prototype-based inheritance** through object cloning and dynamic method delegation. Objects are just Tcl arrays. Methods are just procedures. Inheritance happens at runtime through a live prototype chain.
 
-This package provides a powerful, idiomatic Tcl system for creating flexible data objects. It supports two main object-oriented patterns: **composition** (building complex objects from smaller pieces) and **prototypical inheritance** (cloning objects to create new ones that inherit their behavior).
+## Why This Matters
 
-The library is ideal for managing complex, structured data, such as application configurations. It can ingest and egress data in various formats (YAML, JSON, legacy) and includes an optional, high-performance **C extension** to provide robust and reliable JSON parsing, bypassing the inherent type ambiguities of Tcl.
+Tcl has several OOP systems (TclOO, Incr Tcl, Snit, STOOOP), but they're all **class-based**: you define classes, then instantiate objects. `tcl-group` takes a fundamentally different approach inspired by JavaScript and Lua: **objects inherit directly from other objects**.
+
+### The Prototype Pattern in 30 Seconds
+
+```tcl
+# Define a method (just a regular proc)
+proc speak {animal_name} {
+    upvar 1 $animal_name animal
+    puts "$animal(name) says $animal(sound)"
+}
+
+# Create a prototype object
+group create animal {
+    name    "Generic Animal"
+    sound   "..."
+    speak   "speak"
+}
+
+# Clone it to create a new object
+group copy dog animal
+set dog(name) "Rover"
+set dog(sound) "Woof!"
+
+# Call inherited method
+dog speak
+# -> "Rover says Woof!"
+
+# Add method to parent AFTER child was created
+set animal(eat) "eat_proc"
+
+# Child immediately has the new method
+dog eat  # Works! Live prototype chain.
+```
+
+**No classes. No constructors. Just objects cloning objects.**
+
+## What Makes This Different from TclOO?
+
+| Feature | TclOO | tcl-group |
+|---------|-------|-----------|
+| **Paradigm** | Class-based | **Prototype-based** |
+| **Inheritance** | Static (defined at class creation) | **Dynamic (live delegation chain)** |
+| **Object creation** | `Class new` (instantiation) | **`group copy` (cloning)** |
+| **Add methods to parent** | Must redefine class | **Automatically available to children** |
+| **Object structure** | Opaque (encapsulated) | **Transparent (just Tcl arrays)** |
+| **Multiple instances** | Easy (`[Class new]` each time) | Limited (global array names) |
+| **Serialization** | Manual (custom per class) | **Built-in (YAML/JSON)** |
+| **Learning curve** | Medium (OOP concepts + TclOO syntax) | **Low (if you know arrays + procs)** |
+
+## Core Features
+
+### 1. Prototypical Inheritance
+
+Objects inherit behavior through a **live prototype chain**. The method dispatcher walks up the `parent` chain at call-time, enabling:
+
+- **Dynamic method addition**: Add methods to prototypes after children are created
+- **Flexible object hierarchies**: Chain prototypes as deep as needed
+- **JavaScript/Lua-like OOP**: If you know prototypal inheritance, you already understand this
+
+**[→ Full Prototypical Inheritance Guide](./docs/prototypes.md)**
+
+### 2. Data Composition
+
+Build complex data structures by composing reusable components using a straightforward sigil-based syntax:
+
+```tcl
+# Reusable components
+array set db_config {host "localhost" port 5432}
+group create auth_config {ssl_enabled true timeout 30}
+
+# Compose them into a larger structure
+set keys {database authentication admin}
+set values {@db_config @auth_config "admin@example.com"}
+group createFromLists app_config &keys &values
+
+# Access flattened structure
+puts $app_config(database,host)          # -> localhost
+puts $app_config(authentication,timeout) # -> 30
+```
+
+**Sigils:**
+- `@varname` - Flatten a component array/group into the parent
+- `*varname` - Dereference a variable value
+- `&varname` - Pass-by-name for variable arguments
+- `%filepath` - File path marker for I/O operations
+
+**[→ Composition Guide](./docs/composition.md)**
+
+### 3. Multi-Format Serialization
+
+Serialize and deserialize objects in YAML, JSON, or legacy formats with built-in support:
+
+```tcl
+group create game_state {
+    level      5
+    health     87
+    inventory  "sword,shield,potion"
+}
+
+# Save to JSON
+group toJson game_state %savegame.json
+
+# Load it back
+group fromJson loaded_state %savegame.json
+```
+
+Includes an **optional high-performance C extension** using `json-c` for bulletproof JSON parsing that bypasses Tcl's type ambiguities.
+
+**[→ I/O Guide](./docs/io.md)**
+
+## When to Use This vs TclOO
+
+**Use `tcl-group` when you want:**
+- Prototypical inheritance (JavaScript/Lua-style OOP)
+- Objects that are fully introspectable (just arrays)
+- Built-in serialization to/from YAML/JSON
+- Minimal boilerplate for simple objects
+- Rapid prototyping (game entities, event systems, data processors)
+- Dynamic object modification at runtime
+
+**Use TclOO when you want:**
+- True encapsulation (private variables/methods)
+- Multiple instances of the same class easily
+- Compile-time optimizations
+- Constructor/destructor logic
+- Traditional OOP patterns (factories, singletons, etc.)
+- Complex class hierarchies
 
 ## Installation
 
-The recommended way to install this package is by using the included `deploy.tcl` script. This script will create a versioned directory, copy or link the library files (including the C extension), and generate the necessary `pkgIndex.tcl` file.
+### Quick Start
 
-1.  **Clone the Repository**
-    First, clone the source repository from GitHub.
-    ```bash
-    git clone https://github.com/rudolphpienaar/tcl-group.git
-    cd tcl-group
-    ```
+```bash
+git clone https://github.com/rudolphpienaar/tcl-group.git
+cd tcl-group
+tclsh deploy.tcl group-1.0 ~/tcl/lib
+export TCLLIBPATH="~/tcl/lib"
+```
 
-2.  **Run the Deploy Script**
-    Execute the `deploy.tcl` script. This script should be present in the root of the repository.
+Then in your Tcl script:
+```tcl
+package require group
+group create my_object {foo "bar"}
+```
 
-    * **Standard Install (Copies Files):**
-        ```bash
-        tclsh deploy.tcl group-1.0 ~/src/tcl/lib
-        ```
+### Developer Install (Symlinks)
 
-    * **Developer Install (Creates Symlinks):**
-        ```bash
-        tclsh deploy.tcl --link group-1.0 ~/src/tcl/lib
-        ```
+```bash
+tclsh deploy.tcl --link group-1.0 ~/tcl/lib
+```
 
-3.  **Set the `TCLLIBPATH` Environment Variable**
-    In your shell, export the `TCLLIBPATH` variable, pointing it to the **`<install_root>`** you specified when running the deploy script. This allows Tcl to find the new package.
+### Optional: Compile C Extension for High-Performance JSON
 
-    ```bash
-    # This path should be the parent of your 'group-1.0' directory
-    export TCLLIBPATH="/home/user/src/tcl/lib"
-    ```
-    To make this setting permanent, add this line to your shell's startup file (e.g., `~/.bashrc`, `~/.zshrc`).
+See [**C Extension README**](./clib/README.adoc) for compilation instructions using `json-c`.
 
-4.  **Verify the Installation**
-    You can now use the package in any Tcl script.
-    ```tcl
-    package require group
-    puts "Tcl Group package loaded successfully."
-    ```
+## API Overview
 
-## Core Concepts
+```tcl
+# Object Creation
+group create <name> {key value ...}
+group copy <new_name> <source_name>        # Clone with prototype link
+group createFromLists <name> <keys> <vals> # Composition
 
-This library provides two powerful, distinct mechanisms for creating and structuring objects:
+# Serialization
+group fromYaml <name> <%file | $data>
+group toYaml <name> {%file | $var}
+group fromJson <name> <%file | $data>
+group toJson <name> {%file | $var} ?indent?
+group fromLegacy <name> <%file | $data>
+group toLegacy <name> {%file | $var}
 
-1.  **Composition**: This is the primary mechanism for building complex **data objects**. You can define common data structures once (as simple arrays or as other `group` objects) and reuse them as components to assemble larger, more complex groups.
+# Utilities
+group dump <name>                          # Pretty-print
+group toTable <name> ?options?             # ASCII table format
+group man                                  # Show full documentation
+```
 
-2.  **Prototypical Inheritance**: This is the primary mechanism for creating objects that share **behavior (methods)**. You can create a new `group` by cloning a "prototype." The new object maintains a live link to its parent, allowing it to inherit methods and receive updates dynamically.
+## Examples
 
-## High-Performance C Extension
+- [**Prototypical Inheritance Example**](./examples/inheritance_example.tcl) - Birds with shared behavior
+- [**Composition Example**](./examples/composition_example.tcl) - Multi-level nested configurations
+- [**I/O Example**](./examples/io_example.tcl) - YAML/JSON serialization
 
-To solve the fundamental ambiguity issues with Tcl's type system when parsing complex, nested data, this module includes an optional C extension. This extension uses the battle-hardened `json-c` library to provide a fast, reliable, and robust engine for JSON parsing.
+## Philosophical Position
 
-When compiled and available, the `group::fromJson` command will automatically use this C engine, guaranteeing correct parsing of any valid JSON file.
+This library takes the position that:
 
-* [**C Extension README**](./clib/README.adoc): See the detailed guide for dependencies and compilation instructions.
+1. **Not all problems need encapsulation.** Sometimes you want transparent data structures.
+2. **Prototypes are simpler than classes** for many use cases (game entities, event handlers, configurations).
+3. **Objects should be serializable by default.** If your object is data + behavior references, saving state is trivial.
+4. **Tcl arrays are underutilized.** They're fast, simple, and global - perfect for prototype-based OOP.
 
-## Documentation
+If you've used JavaScript's prototypal inheritance (pre-ES6 classes) or Lua's metatable-based OOP, this will feel immediately familiar.
 
-* [**Composition Guide**](./docs/composition.md): Learn how to build complex data objects by assembling them from components.
-* [**Prototypical Inheritance Guide**](./docs/prototypes.md): Learn how to use the prototype-based OOP features to create objects that inherit behavior.
-* [**Input/Output Guide**](./docs/io.md): Learn how to ingest and egress data in various formats/types.
+## Performance Notes
 
-## API
+The method dispatcher performs **dynamic lookup** on every method call, walking the prototype chain until the method is found. For most applications this is negligible. For hot loops calling methods thousands of times per second, TclOO's compiled dispatch will be faster.
 
-The library provides a single `group` command with the following subcommands:
+Trade-off: **Flexibility vs Speed**. We chose flexibility.
 
-* `group create <group_name> {key value ...}`
-* `group createFromLists <group_name> <key_list> <value_list>`
-* `group copy <new_group_name> <source_group_name>`
-* `group fromYaml <group_name> <%filename | $data>`
-* `group toYaml <group_name> <%filename | $varname>`
-* `group fromJson <group_name> <%filename | $data>`
-* `group toJson <group_name> <%filename | $varname> ?indent_width?`
-* `group fromLegacy <group_name> <%filename | $data>`
-* `group toLegacy <group_name> <%filename | $varname>`
-* `group dump <group_name>`
-* ...and more.
+## Testing
 
-## References
+```bash
+cd tests
+tclsh group_test_suite.tcl
+```
 
-* [The Tclers' Wiki](https://wiki.tcl-lang.org/)
-* [Official Tcl Documentation](https://www.tcl.tk/man/)
+Requires `yaml` and `json` packages.
+
+## Contributing
+
+See [**CONTRIBUTING.md**](./CONTRIBUTING.md) for guidelines.
 
 ## Author
 
-This `group` module was designed and written by **Rudolph Pienaar**.
+Designed and written by **Rudolph Pienaar**.
+
+## License
+
+[See LICENSE](./LICENSE)
+
+---
+
+**Prototypical OOP for Tcl. Objects inherit from objects. No classes required.**
